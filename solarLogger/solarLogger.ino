@@ -5,6 +5,8 @@
 #include <BridgeServer.h>
 #include <BridgeClient.h>
 #include <FileIO.h>
+#include <Temboo.h>
+#include "TembooAccount.h" // contains Temboo account information
 
 BridgeServer server;
 SoftwareSerial mySerial(8,3);
@@ -1233,6 +1235,7 @@ int Crc(byte *data, int offset, int count)
 
   return (int)word(~BccHi, ~BccLo);
 }
+
 #define MESSAGE_GAP_TIMEOUT_IN_MS 5
 byte rxD[256];    
 unsigned int recvIndex = 0;
@@ -1243,10 +1246,15 @@ char msgIndexString[32];
 int dly = 0;
 unsigned long sMillis;  //some global variables available anywhere in the program
 unsigned long cMillis;
+unsigned long lastLog;
+unsigned long currLog;
+const unsigned long logInterval = 15000; //loggin interval in ms
 const unsigned long period = 1000;  //the value is a number of milliseconds
 bool timerStarted = false;
 int count =0;
 bool sniff = false;
+int numRuns = 1;   // execution count, so this doesn't run forever
+int maxRuns = 100; // max number of times the Google Spreadsheet Choreo should run
 
 void setup() {
   // initialize serial communication:
@@ -1262,8 +1270,10 @@ void setup() {
   dF.println("hello");
   dF.close();
   
-  //Initialize timer
+  //Initialize timers
   sMillis = millis();  
+  lastLog = millis();  
+  currLog = lastLog;
 
   // initialize the LED pin and SWSerial port as an output:
   pinMode(ledPin, OUTPUT);
@@ -1280,6 +1290,15 @@ void loop() {
   if (client) {
     process(client);
     client.stop();
+  }
+
+  // Delay logInterval (15s) until calc Nrg
+  if(currLog - lastLog <= logInterval){
+    currLog = millis();
+  }
+  else{
+    lastLog = millis();
+    logNrg();
   }
 }
 
@@ -1500,3 +1519,85 @@ void sniffCommand(BridgeClient client) {
     recvIndex = 0;
   }
 }
+
+void logNrg(){
+
+  Inverter.ReadCumulatedEnergy(5);
+
+  // while we haven't reached the max number of runs...
+  if (numRuns <= maxRuns) {
+
+    Console.println("Running AppendValues - Run #" + String(numRuns++));
+
+    // get the number of milliseconds this sketch has been running
+    unsigned long now = millis();
+    
+    Console.println("Getting sensor value...");
+
+    // get the value we want to append to our spreadsheet
+    unsigned long sensorValue = 1234;
+
+    Console.println("Appending value to spreadsheet...");
+
+    // we need a Process object to send a Choreo request to Temboo
+    TembooChoreo AppendValuesChoreo;
+
+    // invoke the Temboo client
+    // NOTE that the client must be reinvoked and repopulated with
+    // appropriate arguments each time its run() method is called.
+    AppendValuesChoreo.begin();
+    
+    // set Temboo account credentials
+    AppendValuesChoreo.setAccountName(TEMBOO_ACCOUNT);
+    AppendValuesChoreo.setAppKeyName(TEMBOO_APP_KEY_NAME);
+    AppendValuesChoreo.setAppKey(TEMBOO_APP_KEY);
+    
+    // identify the Temboo Library choreo to run (Google > Sheets > AppendValues)
+    AppendValuesChoreo.setChoreo("/Library/Google/Sheets/AppendValues");
+    
+    // set the required Choreo inputs
+    // see https://www.temboo.com/library/Library/Google/Sheets/AppendValues/ 
+    // for complete details about the inputs for this Choreo
+    
+    // your Google Client ID
+    AppendValuesChoreo.addInput("ClientID", GOOGLE_CLIENT_ID);
+
+    // your Google Client Secret
+    AppendValuesChoreo.addInput("ClientSecret", GOOGLE_CLIENT_SECRET);
+
+    // your Google Refresh Token
+    AppendValuesChoreo.addInput("RefreshToken", GOOGLE_REFRESH_TOKEN);
+
+    // the title of the spreadsheet you want to append to
+    AppendValuesChoreo.addInput("SpreadsheetID", SPREADSHEET_ID);
+
+    // convert the time and sensor values to a json array
+    String rowData = "[[\"" + String(now) + "\", \"" + String(sensorValue) + "\"]]";
+
+    // add the RowData input item
+    AppendValuesChoreo.addInput("Values", rowData);
+
+    // run the Choreo and wait for the results
+    // The return code (returnCode) will indicate success or failure 
+    unsigned int returnCode = AppendValuesChoreo.run();
+
+    // return code of zero (0) means success
+    if (returnCode == 0) {
+      Console.println("Success! Appended " + rowData);
+      Console.println("");
+    } else {
+      // return code of anything other than zero means failure  
+      // read and display any error messages
+      while (AppendValuesChoreo.available()) {
+        char c = AppendValuesChoreo.read();
+        Console.print(c);
+      }
+    }
+
+    AppendValuesChoreo.close();
+  }
+
+  Console.println("Waiting...");
+  delay(5000); // wait 5 seconds between AppendValues calls
+}
+
