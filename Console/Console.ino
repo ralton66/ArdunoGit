@@ -1,10 +1,10 @@
 /*
-Console Read example for YunShield
+Console Read example for YunShield/Yún
 
  Read data coming from bridge using the Console.read() function
  and store it in a string.
 
- To see the Console, pick your Yun's name and IP address in the Port menu
+ To see the Console, pick your Yún's name and IP address in the Port menu
  then open the Port Monitor. You can also see it by opening a terminal window
  and typing:
  ssh root@ yourYunsName.local 'telnet localhost 6571'
