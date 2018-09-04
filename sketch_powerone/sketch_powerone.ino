@@ -6,21 +6,15 @@
 #include <BridgeClient.h>
 #include <FileIO.h>
 
-// Listen to the default port 5555, the YÃƒÆ’Ã‚Âºn webserver
-// will forward there all the HTTP requests you send
 BridgeServer server;
 SoftwareSerial mySerial(8,3);
-
 const int ledPin = 13; // the pin that the LED is attached to
-int dbg;      // a variable to read incoming serial data into
-int cnt = 0;
-
+bool verbose = false;
 
 //RS485 control
 #define SSerialTxControl 4 
 #define RS485Transmit HIGH 
 #define RS485Receive LOW 
-
 
 void dbgWriteArray(byte* a, int size){
 
@@ -86,7 +80,6 @@ private:
 
   bool Send(byte address, byte param0, byte param1, byte param2, byte param3, byte param4, byte param5, byte param6)
   {
-    int cnt = 0;
     SendStatus = false;
     ReceiveStatus = false;
 
@@ -104,7 +97,7 @@ private:
     SendData[8] = lowByte(crc);
     SendData[9] = highByte(crc);
 
-    //dbgWriteArray(SendData, sizeof(SendData));
+    if(verbose) dbgWriteArray(SendData, sizeof(SendData));
     clearReceiveData();
 
     for (int i = 0; i < MaxAttempt; i++)
@@ -136,10 +129,10 @@ private:
           ReceiveData[idx++] = mySerial.read();
         }
         if ((int)word(ReceiveData[7], ReceiveData[6]) == Crc16(ReceiveData, 0, 6)) {
-          //dbgWrite("ok");
+          if(verbose) dbgWrite("ok");
           ReceiveStatus = true;
         }
-        //dbgWriteArray(ReceiveData, sizeof(ReceiveData));
+        if(verbose) dbgWriteArray(ReceiveData, sizeof(ReceiveData));
       }
     }
     return ReceiveStatus;
@@ -163,10 +156,8 @@ public:
 
   clsAurora(byte address) {
     Address = address;
-
     SendStatus = false;
     ReceiveStatus = false;
-
     clearReceiveData();
   }
 
@@ -779,7 +770,7 @@ public:
     dF.print(GlobalState(State.GlobalState ));
     dF.close();
 
-    //dbgWriteArray(ReceiveData, sizeof(ReceiveData));
+    if(verbose) dbgWriteArray(ReceiveData, sizeof(ReceiveData));
     return State.ReadState;
   }
 
@@ -936,7 +927,6 @@ public:
         ReceiveData[0] = 255;
         ReceiveData[1] = 255;
       }
-
     }
     else {
       DSP.ReadState = false;
@@ -974,8 +964,6 @@ public:
     else if (type == 9) {
       dF.print("Power 2: ");
     }
-    
-
     dF.print(DSP.Valore, 2);
     dF.println(" ");
     dF.close();
@@ -1241,7 +1229,6 @@ int Crc(byte *data, int offset, int count)
     BccLo = BccLo ^ Tmp;
     Tmp = New >> 4;
     BccLo = BccLo ^ Tmp;
-
   }
 
   return (int)word(~BccHi, ~BccLo);
