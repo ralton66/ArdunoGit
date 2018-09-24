@@ -4,10 +4,7 @@
 #include <BridgeServer.h>
 #include <BridgeClient.h>
 #include <FileIO.h>
-#include <Temboo.h>
-#include "TembooAccount.h" // contains Temboo account information
 
-BridgeServer server;
 SoftwareSerial mySerial(8,3);
 const int ledPin = 13; // the pin that the LED is attached to
 bool verbose = false;
@@ -98,11 +95,17 @@ private:
     SendData[8] = lowByte(crc);
     SendData[9] = highByte(crc);
 
+    if(verbose) dbgWrite("TX Data:");;
     if(verbose) dbgWriteArray(SendData, sizeof(SendData));
     clearReceiveData();
 
     for (int i = 0; i < MaxAttempt; i++)
     {
+      // Flush input buffer
+      while (mySerial.available()){
+          mySerial.read();
+      }
+      
       digitalWrite(SSerialTxControl, RS485Transmit);
       delay(50);
       int numBytes = 0;
@@ -152,7 +155,7 @@ private:
 public:
   bool SendStatus = false;
   bool ReceiveStatus = false;
-  byte ReceiveData[8];
+  byte ReceiveData[32];
 
   clsAurora(byte address) {
     Address = address;
@@ -163,90 +166,6 @@ public:
 
   void clearReceiveData() {
     clearData(ReceiveData, 32);
-  }
-
-  typedef struct {
-    byte TransmissionState;
-    byte GlobalState;
-    float Valore;
-    bool ReadState;
-  } DataDSP;
-
-  DataDSP DSP;
-
-  bool ReadDSP(byte type, byte global) {
-    if ((((int)type >= 1 && (int)type <= 9) || ((int)type >= 21 && (int)type <= 63)) && ((int)global >= 0 && (int)global <= 1)) {
-      DSP.ReadState = Send(Address, (byte)59, type, global, (byte)0, (byte)0, (byte)0, (byte)0);
-
-      if (DSP.ReadState == false) {
-        ReceiveData[0] = 255;
-        ReceiveData[1] = 255;
-      }
-    }
-    else {
-      DSP.ReadState = false;
-      clearReceiveData();
-      ReceiveData[0] = 255;
-      ReceiveData[1] = 255;
-    }
-
-    DSP.TransmissionState = ReceiveData[0];
-    DSP.GlobalState = ReceiveData[1];
-
-    foo.asBytes[0] = ReceiveData[5];
-    foo.asBytes[1] = ReceiveData[4];
-    foo.asBytes[2] = ReceiveData[3];
-    foo.asBytes[3] = ReceiveData[2];
-
-    DSP.Valore = foo.asFloat;
-
-    File dF = FileSystem.open("/usr/ralton/datalog.txt", FILE_APPEND);
-    if (type == 1) {
-      dF.print("Grid Voltage: ");
-    }
-    else if (type == 2) {
-      dF.print("Grid Current: ");
-    }
-    else if (type == 3) {
-      dF.print("Grid Power: ");
-    }
-    else if (type == 5) {
-      dF.print("Vbulk: ");
-    }
-    else if (type == 8) {
-      dF.print("Power 1: ");
-    }
-    else if (type == 9) {
-      dF.print("Power 2: ");
-    }
-    dF.print(DSP.Valore, 2);
-    dF.println(" ");
-    dF.close();
-
-    return DSP.ReadState;
-  }
-
-  typedef struct {
-    byte TransmissionState;
-    byte GlobalState;
-    unsigned long Seconds; // seconds since Jan 1, 2000
-    bool ReadState;
-  } DataTimeDate;
-
-  DataTimeDate TimeDate;
-
-  bool ReadTimeDate() {
-    TimeDate.ReadState = Send(Address, (byte)70, (byte)0, (byte)0, (byte)0, (byte)0, (byte)0, (byte)0);
-
-    if (TimeDate.ReadState == false) {
-      ReceiveData[0] = 255;
-      ReceiveData[1] = 255;
-    }
-
-    TimeDate.TransmissionState = ReceiveData[0];
-    TimeDate.GlobalState = ReceiveData[1];
-    TimeDate.Seconds = ((unsigned long)ReceiveData[2] << 24) + ((unsigned long)ReceiveData[3] << 16) + ((unsigned long)ReceiveData[4] << 8) + (unsigned long)ReceiveData[5];
-    return TimeDate.ReadState;
   }
 
   typedef struct {
@@ -277,20 +196,19 @@ public:
     CumulatedEnergy.TransmissionState = ReceiveData[0];
     CumulatedEnergy.GlobalState = ReceiveData[1];
     if (CumulatedEnergy.ReadState == true) {
-            ulo.asBytes[0] = ReceiveData[5];
-           ulo.asBytes[1] = ReceiveData[4];
-            ulo.asBytes[2] = ReceiveData[3];
-            ulo.asBytes[3] = ReceiveData[2];
-
-           CumulatedEnergy.Energy = ulo.asUlong;
+        ulo.asBytes[0] = ReceiveData[5];
+        ulo.asBytes[1] = ReceiveData[4];
+        ulo.asBytes[2] = ReceiveData[3];
+        ulo.asBytes[3] = ReceiveData[2];
+        CumulatedEnergy.Energy = ulo.asUlong;
     }
-
-    File dF = FileSystem.open("/usr/ralton/datalog.txt", FILE_APPEND);
-  
-    dF.print("NRG: ");
-    dF.print(CumulatedEnergy.Energy, DEC);
-    dF.println(" ");
-    dF.close();
+    if(verbose) {
+      File dF = FileSystem.open("/usr/ralton/datalog.txt", FILE_APPEND);
+      dF.print("NRG: ");
+      dF.print(CumulatedEnergy.Energy, DEC);
+      dF.println(" ");
+      dF.close();
+    }
     return CumulatedEnergy.ReadState;
   }
 };
@@ -298,25 +216,23 @@ public:
 clsAurora Inverter = clsAurora(2);
 unsigned long lastLog;
 unsigned long currLog;
-const unsigned long logInterval = 60000; //loggin interval in ms
+const unsigned long logInterval = 61000; //loggin interval in ms
 int numRuns = 1;   // execution count, so this doesn't run forever
-int maxRuns = 100; // max number of times the Google Spreadsheet Choreo should run
+int maxRuns = 2; // max number of times the Google Spreadsheet Choreo should run
+int cnt = 0;
+bool stat;
 
 void setup() {
   // initialize communications
   Bridge.begin();
   mySerial.begin(19200);
   Console.begin();
-  while(!Console);
+  //while(!Console);
+  //Console.println("Solar Logger");
 
-  // Listen for incoming connection only from localhost
-  // (no one from the external network could connect)
-  server.listenOnLocalhost();
-  server.begin();
-
-  File dF = FileSystem.open("/usr/ralton/datalog.txt", FILE_APPEND);
-  dF.println("hello");
-  dF.close();
+  //File dF = FileSystem.open("/mnt/sda1/data.txt", FILE_APPEND);
+  //dF.println("hello");
+  //dF.close();
   
   //Initialize timers
   lastLog = millis();  
@@ -326,146 +242,28 @@ void setup() {
   pinMode(ledPin, OUTPUT);
   pinMode(SSerialTxControl, OUTPUT);
   digitalWrite(SSerialTxControl, RS485Receive);  // Init Transceiver   
+  Inverter.ReadCumulatedEnergy(5);
 }
 
 void loop() {
-  
-  // Get clients coming from server
-  BridgeClient client = server.accept();
-  
-  // There is a new client?
-  if (client) {
-    process(client);
-    client.stop();
-  }
-
   // Delay logInterval (60s) until calc Nrg
   if(currLog - lastLog <= logInterval){
     currLog = millis();
   }
   else{
+    stat = Inverter.ReadCumulatedEnergy(5);
+    Console.println((Inverter.CumulatedEnergy.Energy));
     lastLog = millis();
-    logNrg();
-  }
-}
-
-void process(BridgeClient client) {
-  // read the command
-  String command = client.readStringUntil('/');
-
-  // is "status" command?
-  if (command == "status") {
-    statusCommand(client);
-  }
-
-  File dF = FileSystem.open("/usr/ralton/datalog.txt", FILE_APPEND);
-  dF.println("End of CMD " + command);
-  dF.close();
-}
-
-void statusCommand(BridgeClient client) {
-  int request, value;
-  bool verb = false;
-  // Read request number
-  request = client.parseInt();
-  if (request ==2 ) verb = true;
-
-  // If the next character is a '/' it means we have an URL
-  // with a value like: "/status/1/1"
-  if (client.read() == '/') {
-    value = client.parseInt();
-  }
-
-  File dF = FileSystem.open("/usr/ralton/datalog.txt", FILE_APPEND);
-  dF.print("Status: ");
-  dF.print(request, DEC);
-  dF.println(" ");
-
-  //Check if there is anything in the SW Ser buffer and clear it
-  value = mySerial.available();
-  if (value > 0){
-    
-    if(verb) dF.print("Data in buffer: ");
-    if(verb) dF.print(value, DEC);
-    if(verb) dF.println(" ");
-
-    while(mySerial.available()){
-      mySerial.read();
+    currLog = lastLog;
+    if((cnt++ > 15)&& stat){
+      cnt = 0;
+      String rowData = String(Inverter.CumulatedEnergy.Energy) + ", " + String(lastLog) +",";
+      //String rowData = "[[\"" + String(cnt) + "\"]]";
+      File dF = FileSystem.open("/mnt/sda1/data.txt", FILE_APPEND);
+      dF.println(rowData);
+      dF.close();
     }
-
-    if(verb) value = mySerial.available();
-    if(verb) dF.print("Data left: ");
-    if(verb) dF.print(value, DEC);
-    if(verb) dF.println(" ");
-  }
-  dF.close();
-
-  if(verb) Inverter.ReadDSP(1,0);
-  if(verb) Inverter.ReadDSP(2,0);
-  if(verb) Inverter.ReadDSP(3,0);
-  if(verb) Inverter.ReadDSP(5,0);
-  if(verb) Inverter.ReadDSP(8,0);
-  if(verb) Inverter.ReadDSP(9,0);
-  Inverter.ReadCumulatedEnergy(5);
-}
-
-void logNrg(){
-
-  Inverter.ReadCumulatedEnergy(5);
-  Inverter.ReadTimeDate();
-  Console.print("Seconds: "); Console.println(Inverter.TimeDate.Seconds);
-  Console.print("Energy:  "); Console.print(Inverter.CumulatedEnergy.Energy); Console.println(" Wh");
-
-  // Limit number of runs...
-  if (numRuns <= maxRuns) {
-
-    // Process object to send a Choreo request to Temboo
-    TembooChoreo AppendValuesChoreo;
-    AppendValuesChoreo.begin();
-    
-    // set Temboo account credentials
-    AppendValuesChoreo.setAccountName(TEMBOO_ACCOUNT);
-    AppendValuesChoreo.setAppKeyName(TEMBOO_APP_KEY_NAME);
-    AppendValuesChoreo.setAppKey(TEMBOO_APP_KEY);
-    
-    // identify the Temboo Library choreo to run (Google > Sheets > AppendValues)
-    AppendValuesChoreo.setChoreo("/Library/Google/Sheets/AppendValues");
-    
-    // set the required Choreo inputs
-    // see https://www.temboo.com/library/Library/Google/Sheets/AppendValues/ 
-    // for complete details about the inputs for this Choreo
-    
-    // setup Google access
-    AppendValuesChoreo.addInput("ClientID", GOOGLE_CLIENT_ID);
-    AppendValuesChoreo.addInput("ClientSecret", GOOGLE_CLIENT_SECRET);
-    AppendValuesChoreo.addInput("RefreshToken", GOOGLE_REFRESH_TOKEN);
-    AppendValuesChoreo.addInput("SpreadsheetID", SPREADSHEET_ID);
-
-    // convert the time and sensor values to a json array
-    String rowData = "[[\"" + String(Inverter.TimeDate.Seconds) + "\", \"" + String(Inverter.CumulatedEnergy.Energy) + "\"]]";
-
-    // add the RowData input item
-    AppendValuesChoreo.addInput("Values", rowData);
-
-    // run the Choreo and wait for the results
-    // The return code (returnCode) will indicate success or failure 
-    unsigned int returnCode = AppendValuesChoreo.run();
-
-    // return code of zero (0) means success
-    if (returnCode == 0) {
-      Console.println("Success! Appended " + rowData);
-      Console.println("");
-    } else {
-      // return code of anything other than zero means failure  
-      // read and display any error messages
-      while (AppendValuesChoreo.available()) {
-        char c = AppendValuesChoreo.read();
-        Console.print(c);
-      }
-    }
-    AppendValuesChoreo.close();
   }
 }
-
 
 
