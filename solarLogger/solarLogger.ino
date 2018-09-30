@@ -4,6 +4,7 @@
 #include <BridgeServer.h>
 #include <BridgeClient.h>
 #include <FileIO.h>
+#include <Process.h>
 
 SoftwareSerial mySerial(8,3);
 const int ledPin = 13; // the pin that the LED is attached to
@@ -214,13 +215,20 @@ public:
 };
 
 clsAurora Inverter = clsAurora(2);
-unsigned long lastLog;
-unsigned long currLog;
-const unsigned long logInterval = 61000; //loggin interval in ms
-int numRuns = 1;   // execution count, so this doesn't run forever
-int maxRuns = 2; // max number of times the Google Spreadsheet Choreo should run
-int cnt = 0;
+Process date;
 bool stat;
+bool daytime;
+long nrg;
+long nrg1;
+String timeString;
+String DOW;
+String Month;
+String Day;
+String Year;
+String second;
+String minute; 
+String hour; 
+int thisHour; 
 
 void setup() {
   // initialize communications
@@ -230,40 +238,96 @@ void setup() {
   //while(!Console);
   //Console.println("Solar Logger");
 
-  //File dF = FileSystem.open("/mnt/sda1/data.txt", FILE_APPEND);
-  //dF.println("hello");
-  //dF.close();
-  
-  //Initialize timers
-  lastLog = millis();  
-  currLog = lastLog;
+  thisHour = 0;
 
   // initialize the LED pin and SWSerial port as an output:
   pinMode(ledPin, OUTPUT);
   pinMode(SSerialTxControl, OUTPUT);
   digitalWrite(SSerialTxControl, RS485Receive);  // Init Transceiver   
+
   Inverter.ReadCumulatedEnergy(5);
 }
 
 void loop() {
-  // Delay logInterval (60s) until calc Nrg
-  if(currLog - lastLog <= logInterval){
-    currLog = millis();
+ 
+  stat = Inverter.ReadCumulatedEnergy(5);
+  if(stat){
+    daytime = stat;  
   }
-  else{
+  nrg = Inverter.CumulatedEnergy.Energy;
+
+  if ((nrg > (nrg1 + 10000)) || (nrg < nrg1) || (!stat)){
     stat = Inverter.ReadCumulatedEnergy(5);
-    Console.println((Inverter.CumulatedEnergy.Energy));
-    lastLog = millis();
-    currLog = lastLog;
-    if((cnt++ > 15)&& stat){
-      cnt = 0;
-      String rowData = String(Inverter.CumulatedEnergy.Energy) + ", " + String(lastLog) +",";
-      //String rowData = "[[\"" + String(cnt) + "\"]]";
-      File dF = FileSystem.open("/mnt/sda1/data.txt", FILE_APPEND);
-      dF.println(rowData);
-      dF.close();
+    if(Console){
+      Console.print("Read Status: ");
+      Console.print(stat);
+      Console.print(", NRG: ");
+      Console.print(nrg);
+      Console.print(", Last NRG: ");
+      Console.println(nrg1);
     }
   }
+  nrg1 = nrg;
+
+  //Get the current linux time from Yun
+  if (!date.running())  {
+    date.begin("date");
+    date.addParameter("+%A,%m,%d,%y,%H,%M,%S,");
+    date.run();
+  }
+
+  //if there's a result from the date process, Parse it.
+  while (date.available()>0) {
+    timeString = date.readString();    
+    int idxs = timeString.indexOf(",");
+    DOW = timeString.substring(0,idxs);
+    String s = timeString.substring(idxs+1);
+    idxs = s.indexOf(",");
+    Month = s.substring(0,idxs);
+    s = s.substring(idxs+1);
+    idxs = s.indexOf(",");
+    Day = s.substring(0,idxs);
+    s = s.substring(idxs+1);
+    idxs = s.indexOf(",");
+    Year = s.substring(0,idxs);
+    s = s.substring(idxs+1);
+    idxs = s.indexOf(",");
+    hour = s.substring(0,idxs);
+    s = s.substring(idxs+1);
+    idxs = s.indexOf(",");
+    minute = s.substring(0,idxs);
+    s = s.substring(idxs+1);
+    idxs = s.indexOf(",");
+    second = s.substring(0,idxs);
+
+    if(Console){
+      timeString = DOW + " " + Month + "/" + Day + "/" + Year + " " + hour + ":" + minute + ":" + second;
+      Console.print("Date: ");
+      Console.println(timeString);
+    }
+    timeString = Month + "," + Day + "," + Year + "," + hour + "," + minute + "," + second;
+  }
+
+  
+  //At the top of the hour write out energy and time to Linux
+  int t = hour.toInt();
+  if((thisHour != t) && daytime){
+    thisHour = t;
+    if(Console){
+      Console.println(nrg);
+    }
+          
+    // if stat is 0 then no more reading today so wait till next reading tommorow
+    if(!stat){
+      daytime = stat;
+    }
+
+    String rowData = String(Inverter.CumulatedEnergy.Energy) + "," + timeString + ",";
+    File dF = FileSystem.open("/mnt/sda1/data.txt", FILE_APPEND);
+    dF.println(rowData);
+    dF.close();
+  }
+  delay(60000);
 }
 
 
